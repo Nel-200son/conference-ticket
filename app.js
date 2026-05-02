@@ -5,11 +5,11 @@ var CONFIG = {
   resend_api_key: 're_GUWkEbnS_NwaoLVgHWLqrUg6xRtRJ9h5G',
   email_from: 'billets@excellence-en-action.bj',
   email_from_name: 'Excellence en Action',
-  supabase_url: 'https://VOTRE_ID_SUPABASE.supabase.co',
-  supabase_key: 'VOTRE_CLE_ANON_SUPABASE'
+  supabase_url: 'https://gibnmpvthoacomhcnawj.supabase.co',
+  supabase_key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdpYm5tcHZ0aG9hY29taGNuYXdqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2NDM5MzIsImV4cCI6MjA5MzIxOTkzMn0.BFeJWPfJgwmNejo_ZNpR7wJKbLzo90mj2lKxhCbnm4Q'
 };
 
-const supabase = supabase.createClient(CONFIG.supabase_url, CONFIG.supabase_key);
+const supabaseClient = supabase.createClient(CONFIG.supabase_url, CONFIG.supabase_key);
 
 var pass = {name:'',price:'',amount:0,features:[]};
 var buyer = {};
@@ -88,8 +88,10 @@ function runPostPayment() {
   // Enregistrement dans Supabase
   saveParticipantToDB();
 
-  generateQR().then(function(qrImg) {
-    return generateTicketPDF(qrImg).then(function(pdf) {
+  Promise.all([generateQR(), fetchImageAsBase64('bg.png')]).then(function(results) {
+    var qrImg = results[0];
+    var bgImg = results[1];
+    return generateTicketPDF(qrImg, bgImg).then(function(pdf) {
       pdfDataUrl = pdf;
       setStep('step-pdf','done');
       setStep('step-email','active-step');
@@ -104,6 +106,22 @@ function runPostPayment() {
     showSuccess();
     alert('Paiement confirme. Probleme envoi email - telechargez votre billet sur cette page.');
   });
+}
+
+function fetchImageAsBase64(url) {
+  return fetch(url)
+    .then(function(res) { return res.blob(); })
+    .then(function(blob) {
+      return new Promise(function(resolve, reject) {
+        var reader = new FileReader();
+        reader.onloadend = function() { resolve(reader.result); };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }).catch(function(e) {
+      console.warn("Could not load background image", e);
+      return null;
+    });
 }
 
 function generateQR() {
@@ -128,7 +146,7 @@ function generateQR() {
 
 async function saveParticipantToDB() {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseClient
       .from('participants')
       .insert([
         { 
@@ -150,13 +168,22 @@ async function saveParticipantToDB() {
   }
 }
 
-function generateTicketPDF(qrImg) {
+function generateTicketPDF(qrImg, bgImg) {
   return new Promise(function(resolve) {
     var jsPDF = window.jspdf.jsPDF;
+    var GState = window.jspdf.GState;
     var doc = new jsPDF({orientation:'portrait', unit:'mm', format:'a5'});
     var W = 148, H = 210;
 
-    doc.setFillColor(13,10,6); doc.rect(0,0,W,H,'F');
+    if (bgImg) {
+      doc.addImage(bgImg, 'PNG', 0, 0, W, H);
+      if (GState) doc.setGState(new GState({opacity: 0.85}));
+      doc.setFillColor(49,32,17); doc.rect(0,0,W,H,'F'); // Dominance marron
+      if (GState) doc.setGState(new GState({opacity: 1.0}));
+    } else {
+      doc.setFillColor(49,32,17); doc.rect(0,0,W,H,'F');
+    }
+
     doc.setFillColor(0,154,68); doc.rect(0,0,5,H/3,'F');
     doc.setFillColor(200,16,46); doc.rect(0,H/3,5,H/3,'F');
     doc.setFillColor(252,209,22); doc.rect(0,(H/3)*2,5,H/3,'F');
@@ -180,8 +207,17 @@ function generateTicketPDF(qrImg) {
     doc.roundedRect(15,60,W-30,16,2,2,'FD');
     doc.setFontSize(7); doc.setTextColor(138,122,90); doc.setFont('helvetica','normal');
     doc.text('PASS', W/2, 66, {align:'center'});
-    doc.setFontSize(14); doc.setTextColor(255,255,255); doc.setFont('helvetica','bold');
-    doc.text(pass.name.toUpperCase(), W/2, 73, {align:'center'});
+    
+    doc.setFontSize(14);
+    var pName = pass.name.toUpperCase();
+    if (pName === 'DECOUVERTE') doc.setTextColor(138, 155, 176);
+    else if (pName === 'ASCENSION') doc.setTextColor(212, 160, 23);
+    else if (pName === 'IMPACT') doc.setTextColor(200, 16, 46);
+    else if (pName === 'INCONTOURNABLE') doc.setTextColor(0, 154, 68);
+    else doc.setTextColor(255, 255, 255);
+    
+    doc.setFont('helvetica','bold');
+    doc.text(pName, W/2, 73, {align:'center'});
 
     doc.setFontSize(7); doc.setTextColor(138,122,90); doc.setFont('helvetica','normal');
     doc.text('NOM DU PARTICIPANT', 15, 86);

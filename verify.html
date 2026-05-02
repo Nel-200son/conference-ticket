@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vérification du billet</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<style>
+/* === TON CSS ORIGINAL (inchangé) === */
+:root{
+  --gold:#D4A017;
+  --green:#009A44;
+  --red:#C8102E;
+  --yellow:#FCD116;
+  --dark:#1C1610;
+  --light:#FDF8EE;
+  --muted:#6B5A3A;
+  --border:rgba(212,160,23,0.25);
+}
+
+body{
+  font-family:'Montserrat',sans-serif;
+  background:var(--light);
+  display:flex;flex-direction:column;
+  min-height:100vh;
+}
+
+.header{
+  background:var(--dark);
+  padding:16px;
+  text-align:center;
+  color:var(--gold);
+  font-weight:700;
+}
+
+main{
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+}
+
+.card{
+  width:100%;
+  max-width:480px;
+  background:#fff;
+  border-radius:20px;
+  overflow:hidden;
+  border:1px solid var(--border);
+}
+
+.status-banner{
+  padding:30px;
+  text-align:center;
+  color:#fff;
+}
+.status-banner.valid{background:var(--green)}
+.status-banner.invalid{background:var(--red)}
+.status-banner.loading{background:var(--dark)}
+
+.flag-bar{
+  height:5px;
+  background:linear-gradient(90deg,var(--green) 33%,var(--red) 33% 66%,var(--yellow) 66%);
+}
+
+.ticket-details{padding:20px}
+
+.detail-row{margin-bottom:12px}
+
+.detail-label{
+  font-size:10px;
+  color:var(--muted);
+}
+
+.detail-value{
+  font-weight:700;
+}
+
+.features-list{
+  padding:20px;
+  background:#f7f3e8;
+}
+
+.feature-item{
+  font-size:13px;
+  margin:4px 0;
+}
+
+.error-box{
+  padding:20px;
+  text-align:center;
+  color:var(--red);
+}
+
+.timestamp{
+  text-align:center;
+  font-size:12px;
+  padding:10px;
+}
+
+.card-footer{
+  background:var(--dark);
+  color:#fff;
+  text-align:center;
+  padding:15px;
+}
+
+/* === NOUVEAU POUR LE SCANNER === */
+#reader {
+  width: 100%;
+  max-width: 480px;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 2px solid var(--gold) !important;
+  margin-bottom: 20px;
+  background: #fff;
+}
+#reader__dashboard_section_csr button {
+  background: var(--dark) !important;
+  color: var(--gold) !important;
+  border: 1px solid var(--gold) !important;
+  padding: 8px 12px !important;
+  border-radius: 5px !important;
+  cursor: pointer;
+  font-family: 'Montserrat', sans-serif;
+  font-weight: 600;
+}
+.btn-next {
+  background: var(--dark);
+  color: var(--gold);
+  border: 1px solid var(--gold);
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 15px;
+  width: 100%;
+  font-family: 'Montserrat', sans-serif;
+  transition: 0.3s;
+}
+.btn-next:hover {
+  background: var(--gold);
+  color: var(--dark);
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">
+  Excellence en Action — Vérification
+</div>
+
+<main style="flex-direction: column;">
+  <div id="reader" style="display:none;"></div>
+  <div class="card" id="card">
+    <div style="padding:40px; text-align:center; color:var(--muted)">Chargement...</div>
+  </div>
+</main>
+
+<script>
+// ================= CONFIG =================
+const supabaseUrl = 'https://gibnmpvthoacomhcnawj.supabase.co';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdpYm5tcHZ0aG9hY29taGNuYXdqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2NDM5MzIsImV4cCI6MjA5MzIxOTkzMn0.BFeJWPfJgwmNejo_ZNpR7wJKbLzo90mj2lKxhCbnm4Q';
+const supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+
+const PASS_FEATURES = {
+  Decouverte: ['Accès conférence'],
+  Ascension: ['Conférence + bonus'],
+  Impact: ['Tous avantages'],
+  Incontournable: ['VIP total']
+};
+
+const PASS_PRICES = {
+  Decouverte: '10 000',
+  Ascension: '30 000',
+  Impact: '50 000',
+  Incontournable: '150 000'
+};
+
+// ================= HELPERS =================
+const $ = id => document.getElementById(id);
+
+const create = (tag, { className, text } = {}) => {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text) el.textContent = text;
+  return el;
+};
+
+const getParams = () => {
+  const url = new URL(window.location.href);
+  return {
+    ref: url.searchParams.get('ref') || url.searchParams.get('reference') || '',
+    nom: url.searchParams.get('nom') || '',
+    pass: url.searchParams.get('pass') || '',
+    mode: url.searchParams.get('mode') || '',
+    sig: url.searchParams.get('sig') || ''
+  };
+};
+
+// ================= UI =================
+function renderValid(data){
+  const card = $('card');
+  card.replaceChildren();
+
+  const banner = create('div',{className:'status-banner valid', text:'Billet valide'});
+  const flag = create('div',{className:'flag-bar'});
+
+  const details = create('div',{className:'ticket-details'});
+
+  details.append(
+    create('div',{className:'detail-row', text:'Nom: '+decodeURIComponent(data.nom)}),
+    create('div',{className:'detail-row', text:'Pass: '+data.pass}),
+    create('div',{className:'detail-row', text:'Prix: '+PASS_PRICES[data.pass]+' FCFA'})
+  );
+
+  const featuresBox = create('div',{className:'features-list'});
+  (PASS_FEATURES[data.pass] || []).forEach(f=>{
+    featuresBox.append(create('div',{className:'feature-item', text:'✔ '+f}));
+  });
+
+  const timeBox = create('div', {className:'timestamp', text: 'Scanné le ' + new Date().toLocaleString()});
+
+  const footer = create('div',{className:'card-footer', text:'Excellence en Action'});
+
+  // Bouton Scanner Suivant
+  const btnNext = create('button', {className:'btn-next', text:'📸 SCANNER LE SUIVANT'});
+  btnNext.onclick = openScanner;
+
+  card.append(banner,flag,details,featuresBox,timeBox,footer);
+  card.append(btnNext);
+}
+
+function renderInvalid(msg){
+  const card = $('card');
+  card.replaceChildren();
+
+  card.append(
+    create('div',{className:'status-banner invalid', text:'Billet invalide'}),
+    create('div',{className:'flag-bar'}),
+    create('div',{className:'error-box', text:msg})
+  );
+
+  const btnNext = create('button', {className:'btn-next', text:'📸 RÉESSAYER / SCANNER SUIVANT'});
+  btnNext.onclick = openScanner;
+  card.append(btnNext);
+}
+
+// ================= VALIDATION =================
+function validate(d){
+  if(!d.ref || !d.nom || !d.pass) return 'QR invalide';
+  if(!PASS_FEATURES[d.pass]) return 'Pass inconnu';
+  if(!d.ref.startsWith('FA-')) return 'Référence invalide';
+  if(!d.sig || d.sig.length<8) return 'Signature invalide';
+  return null;
+}
+
+// ================= SCANNER LOGIC =================
+let html5QrCode = null;
+
+async function openScanner() {
+  $('card').style.display = 'none';
+  $('reader').style.display = 'block';
+  
+  if (!html5QrCode) {
+    html5QrCode = new Html5Qrcode("reader");
+  }
+
+  const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+
+  try {
+    await html5QrCode.start(
+      { facingMode: "environment" }, 
+      config,
+      (decodedText) => {
+        // Succès du scan
+        stopScanner();
+        processScanResult(decodedText);
+      }
+    );
+  } catch (err) {
+    console.error("Erreur caméra:", err);
+    alert("Impossible d'accéder à la caméra");
+    $('card').style.display = 'block';
+    $('reader').style.display = 'none';
+  }
+}
+
+function stopScanner() {
+  if (html5QrCode) {
+    html5QrCode.stop().then(() => {
+      $('reader').style.display = 'none';
+      $('card').style.display = 'block';
+    }).catch(err => console.error(err));
+  }
+}
+
+function processScanResult(urlText) {
+  try {
+    const url = new URL(urlText);
+    const newData = {
+      ref: url.searchParams.get('ref') || url.searchParams.get('reference') || '',
+      nom: url.searchParams.get('nom') || '',
+      pass: url.searchParams.get('pass') || '',
+      mode: url.searchParams.get('mode') || '',
+      sig: url.searchParams.get('sig') || ''
+    };
+    verifyData(newData);
+  } catch (e) {
+    renderInvalid("QR Code non reconnu ou URL invalide");
+  }
+}
+
+// ================= INIT =================
+async function startVerification() {
+  const data = getParams();
+  if (!data.ref) {
+    // Si on arrive sans paramètres, on ouvre directement le scanner
+    openScanner();
+    return;
+  }
+  verifyData(data);
+}
+
+async function verifyData(data) {
+  // 1. Validation de base
+  const err = validate(data);
+  if(err) { renderInvalid(err); return; }
+
+  $('card').innerHTML = '<div style="padding:40px; text-align:center;">Vérification...</div>';
+
+  try {
+    // 2. Vérification dans Supabase
+    let { data: participant, error } = await supabaseClient
+      .from('participants')
+      .select('*')
+      .eq('reference', data.ref)
+      .single();
+
+    if (error || !participant) {
+      renderInvalid("Billet inconnu dans la base");
+      return;
+    }
+
+    // 3. Vérification si déjà scanné
+    if (participant.est_scanne) {
+      let dateInfo = participant.scanne_le;
+      const scanDate = new Date(participant.scanne_le);
+      if (!isNaN(scanDate.getTime())) {
+        dateInfo = scanDate.toLocaleString();
+      }
+      renderInvalid("ALERTE : Billet déjà utilisé (Scan : " + dateInfo + ")");
+      return;
+    }
+
+    // 4. Si tout est OK, on marque comme scanné
+    const now = new Date();
+    const timeStr = now.getHours().toString().padStart(2, '0') + ':' + 
+                    now.getMinutes().toString().padStart(2, '0') + ':' + 
+                    now.getSeconds().toString().padStart(2, '0');
+
+    const { error: updateError } = await supabaseClient
+      .from('participants')
+      .update({ 
+        est_scanne: true, 
+        scanne_le: timeStr 
+      })
+      .eq('reference', data.ref);
+
+    if (updateError) throw updateError;
+
+    // 5. Affichage final
+    renderValid(data);
+
+  } catch (e) {
+    console.error(e);
+    renderInvalid("Erreur lors de la vérification");
+  }
+}
+
+setTimeout(startVerification, 500);
+
+</script>
+
+</body>
+</html>
